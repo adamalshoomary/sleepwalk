@@ -1,0 +1,17 @@
+{
+  "name": "sleepwalk",
+  "owner": {
+    "name": "Adam Al Shoomary",
+    "url": "https://github.com/adamalshoomary"
+  },
+  "metadata": {
+    "description": "The sleepwalk mod for Claude Code: keep a session working with the MacBook lid shut."
+  },
+  "plugins": [
+    {
+      "name": "sleepwalk",
+      "source": "./",
+      "description": "Keeps a Claude Code session working with the MacBook lid shut, then turns sleep back on when the work ends."
+    }
+  ]
+}
