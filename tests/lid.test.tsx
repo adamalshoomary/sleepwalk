@@ -247,7 +247,7 @@ describe('the mode in a session', () => {
 
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await $.ui.mount({ ...BAND, surface })
-      expect((await ui.find({ key: 'on' }))?.props.label).toBe('Keep working with the lid closed')
+      expect((await ui.find({ key: 'on' }))?.props.label).toBe('Stay awake with lid shut')
       await ui.unmount()
       const footer = await $.ui.mount({ ...FOOTER, surface })
       expect(await bandText(footer)).not.toContain('sleepwalking')
@@ -276,8 +276,8 @@ describe('the mode in a session', () => {
     await footer.unmount()
 
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await bandText(band)).toContain('Sleepwalking until 23:14 (2 h left)')
-    expect((await band.find({ key: 'off' }))?.props.label).toBe('Turn off')
+    expect(await bandText(band)).toContain('Awake until 23:14 | 2 h left, battery 80%')
+    expect((await band.find({ key: 'off' }))?.props.label).toBe('Stop')
     await band.unmount()
   })
 
@@ -293,7 +293,8 @@ describe('the mode in a session', () => {
     await band.press({ key: 'off' })
     expect(mac.files.size).toBe(0)
     expect(mac.sleep).toBe(0)
-    expect(await bandText(band)).toContain('Sleep is back on: the mode was turned off.')
+    expect(await bandText(band)).not.toContain('Sleep back on')
+    expect((await band.find({ key: 'on' }))?.props.label).toBe('Stay awake with lid shut')
     expect(mac.status).toBeUndefined()
     await band.unmount()
   })
@@ -398,9 +399,9 @@ describe('the mode in a session', () => {
     await clock.advance(20_000)
 
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await bandText(band)).toContain('Sleep is back on: the battery fell to 24%.')
+    expect(await bandText(band)).toContain('Sleep back on: the battery fell to 24%.')
     await band.unmount()
-    expect(mac.toasts.at(-1)).toBe('Sleepwalk mode ended: the battery fell to 24%.')
+    expect(mac.toasts.at(-1)).toBe('Sleep back on: the battery fell to 24%.')
   })
 
   test('a second session joins a running hold with no password', async ($, on) => {
@@ -415,7 +416,7 @@ describe('the mode in a session', () => {
     expect(await lid($, 'on')).toContain('Joined the hold another session started')
     expect(mac.calls.some(call => call[0] === '/usr/bin/osascript')).toBe(false)
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await bandText(band)).toContain('This session joined a hold another session started.')
+    expect(await bandText(band)).toContain('Awake until 23:14')
     await band.unmount()
 
     expect(await lid($, 'off')).toContain('Another session still keeps the Mac awake')
@@ -432,7 +433,7 @@ describe('the mode in a session', () => {
     await clock.advance(5)
 
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await bandText(band)).toContain('This session asks before some tools run (default mode)')
+    expect(await bandText(band)).toContain('Default mode asks first.')
     expect(await bandText(band)).toContain('Remote Control')
     await band.unmount()
 
@@ -450,11 +451,11 @@ describe('the mode in a session', () => {
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await bandText(band)).toContain('Sleep is still off on this Mac')
+    expect(await bandText(band)).toContain('Sleep is still off')
     await band.press({ key: 'restore' })
     expect(mac.sleep).toBe(0)
-    expect(await bandText(band)).toContain('Sleep is back on.')
-    expect(await bandText(band)).not.toContain('Sleep is still off on this Mac')
+    expect(await bandText(band)).toContain('Sleep back on.')
+    expect(await bandText(band)).not.toContain('Sleep is still off')
     await band.unmount()
   })
 

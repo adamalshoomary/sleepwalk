@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren, Timer } from 'claude-code'
 
 import type { LidHold, LidWork } from '../types'
 import {
@@ -31,6 +31,8 @@ import {
   words,
 } from './facts'
 import type { Battery, Settings, Watcher } from './facts'
+import { moonOff, moonOn, sized } from './icons'
+import { below, checkSoon, registerUpdate } from './update'
 
 // sleepwalk: keeps this session working with the lid shut.
 //
@@ -189,7 +191,7 @@ async function turnOn($: EngineInterface, cfg: Settings): Promise<string> {
   const [pidRun, home] = await Promise.all([run($, ['/bin/sh', '-c', 'echo $PPID']), $.env.get('HOME')])
   const pid = pidRun.stdout.trim()
   if (!/^\d+$/.test(pid) || !home?.startsWith('/')) {
-    const text = 'Sleepwalk mode stays off: this session process could not be found.'
+    const text = 'Stayed off: this session could not be found.'
     await say($, text, true)
     return text
   }
@@ -206,7 +208,7 @@ async function turnOn($: EngineInterface, cfg: Settings): Promise<string> {
     temp: temperature(ioreg.stdout),
   })
   if (refused) {
-    await say($, `Sleepwalk mode stays off. ${refused}`, true)
+    await say($, `Stayed off. ${refused}`, true)
     return `Sleepwalk mode stays off. ${refused}`
   }
 
@@ -288,9 +290,9 @@ async function afterOn($: EngineInterface, cfg: Settings): Promise<void> {
   await update($, work, w => ({ ...w, lastWorkAt: h.startedAt }))
   startBeating($, cfg)
   $.ui.status(statusLine(h, null))
-  $.ui.toast(`Sleepwalk mode is on until ${h.endsAtText}. You can shut the lid.`)
+  $.ui.toast(`Awake until ${h.endsAtText}. The screen stays unlocked.`)
   if (asksForPermission(await read($, mode)) !== false) {
-    $.ui.toast('This session may ask before tools run. Answer from your phone with Remote Control.')
+    $.ui.toast('Prompts wait for you. Answer from your phone with Remote Control.')
   }
   await tellModel(
     $,
@@ -365,16 +367,16 @@ async function ended($: EngineInterface, h: LidHold, cfg: Settings, facts: Facts
   if (facts.isSleepOff === true || isStillOff) {
     await update($, isLeftOff, () => true)
     await update($, isLeftoverHidden, () => false)
-    await say($, `The hold ended (${why}), but sleep is still off. Press "Turn sleep back on".`, true)
+    await say($, `Ended (${why}), but sleep is still off.`, true)
     await notice($, `the hold ended (${why}), but sleep is still off on this Mac.`)
   } else if (facts.isSleepOff === null) {
-    await say($, `The hold ended (${why}). Run /lid status to check that sleep is back on.`, true)
+    await say($, `Ended (${why}). Check with /lid status.`, true)
     await notice($, `the hold ended (${why}); pmset did not answer, so sleep was not checked.`)
   } else {
-    await say($, `Sleep is back on: ${why}.`)
+    await say($, `Sleep back on: ${why}.`)
     await notice($, `sleep is back on: ${why}.`)
   }
-  $.ui.toast(`Sleepwalk mode ended: ${why}.`)
+  $.ui.toast(`Sleep back on: ${why}.`)
   await tellModel($, 'Sleepwalk mode is off. Shutting the lid sleeps the Mac again.')
 }
 
@@ -385,7 +387,7 @@ async function turnOff($: EngineInterface, cfg: Settings, reason: string): Promi
 
   stopBeating()
   if (h.phase === 'asking') {
-    await stayOff($, h, 'Sleepwalk mode stays off. If you type the password now, sleep comes back on within seconds.')
+    await stayOff($, h, 'Stayed off. Typing the password now changes nothing.')
     return 'Sleepwalk mode stays off.'
   }
 
@@ -395,7 +397,7 @@ async function turnOff($: EngineInterface, cfg: Settings, reason: string): Promi
 
   let text: string
   if ((await others($, h)) > 0) {
-    text = `Sleepwalk mode is off for this session (${why}). Another session still keeps the Mac awake with the lid shut.`
+    text = `Off here. Another session still keeps the Mac awake.`
   } else {
     let facts = await readFacts($)
     for (let tries = 0; tries < 12 && (facts.isSleepOff !== false || ownWatchers(facts, h.beat).length > 0); tries++) {
@@ -403,21 +405,22 @@ async function turnOff($: EngineInterface, cfg: Settings, reason: string): Promi
       facts = await readFacts($)
     }
     if (facts.isSleepOff === false) {
-      text = `Sleep is back on: ${why}.`
+      text = reason === 'turned off' ? '' : `Sleep back on: ${why}.`
     } else {
       await update($, isLeftOff, () => true)
       await update($, isLeftoverHidden, () => false)
-      text = `Sleep is still off after the hold ended (${why}). Press "Turn sleep back on".`
+      text = `Ended (${why}), but sleep is still off.`
     }
   }
 
   await update($, hold, () => OFF)
-  await say($, text, text.startsWith('Sleep is still off'))
-  await notice($, text)
+  if (text === '') await update($, note, () => null)
+  else await say($, text, text.endsWith('sleep is still off.'))
+  await notice($, text === '' ? `sleep is back on: ${why}.` : text)
   $.ui.status(undefined)
   await tellModel($, 'Sleepwalk mode is off. Shutting the lid sleeps the Mac again.')
 
-  return text
+  return text === '' ? 'Sleep back on.' : text
 }
 
 async function restoreSleep($: EngineInterface): Promise<void> {
@@ -435,7 +438,7 @@ async function restoreSleep($: EngineInterface): Promise<void> {
     return
   }
   await checkLeftover($)
-  await say($, (await read($, isLeftOff)) ? 'Sleep is still off. Run `sudo pmset -a disablesleep 0` in Terminal.' : 'Sleep is back on.')
+  await say($, (await read($, isLeftOff)) ? 'Sleep is still off. Run `sudo pmset -a disablesleep 0` in Terminal.' : 'Sleep back on.')
 }
 
 async function statusText($: EngineInterface, cfg: Settings): Promise<string> {
@@ -477,6 +480,7 @@ async function statusText($: EngineInterface, cfg: Settings): Promise<string> {
 
 export const register: Register = (on, options) => {
   const cfg = settingsOf(options)
+  registerUpdate(on)
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -502,6 +506,7 @@ export const register: Register = (on, options) => {
     }
 
     await checkLeftover($)
+    checkSoon($)
     return started
   })
 
@@ -580,79 +585,74 @@ export const register: Register = (on, options) => {
     ])
     const now = await $.clock.now()
     const asks = asksForPermission(m)
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Button, Text } = els
+    const Svg = 'Svg' in els ? els.Svg : undefined
+    // One row: the moon, a few words, the buttons.
+    const row = (icon: string, alt: string, key: string, ...parts: RenderChildren[]) => (
+      <Box key={key} flexDirection="row" alignItems="center" gap="sm">
+        {Svg && <Svg source={sized(icon, 16)} alt={alt} width={16} height={16} isInteractive />}
+        {parts}
+      </Box>
+    )
 
     const leftover =
-      isLeft && !isHidden && held.phase === 'off' ? (
-        <Box key="leftover">
-          <Text color="yellow">Sleep is still off on this Mac, so a shut lid does not sleep it. </Text>
-          <Button key="restore" label="Turn sleep back on" onPress={() => restoreSleep($)} />
-          <Text> </Text>
-          <Button key="leave" label="Leave it" onPress={() => update($, isLeftoverHidden, () => true)} />
-        </Box>
-      ) : null
+      isLeft && !isHidden && held.phase === 'off'
+        ? row(
+            moonOff,
+            'sleepwalk',
+            'leftover',
+            <Text color="yellow">Sleep is still off</Text>,
+            <Button key="restore" label="Turn it back on" variant="primary" onPress={() => restoreSleep($)} />,
+            <Button key="leave" label="Leave it" onPress={() => update($, isLeftoverHidden, () => true)} />,
+          )
+        : null
 
-    const outcome = said ? (
-      <Box key="note">
-        <Text color={said.isWarning ? 'yellow' : undefined} dimColor={!said.isWarning}>
-          {said.text}{' '}
-        </Text>
-        <Button key="clear" label="OK" onPress={() => update($, note, () => null)} />
-      </Box>
-    ) : null
+    const rest = await next(e)
 
     if (held.phase === 'asking') {
-      return (
-        <Box flexDirection="column">
-          <Text>sleepwalk: type your Mac password in the box that opened.</Text>
-        </Box>
-      )
+      return below(Box, rest, row(moonOff, 'sleepwalk', 'asking', <Text>Type your Mac password</Text>))
     }
 
     if (held.phase === 'stopping') {
-      return (
-        <Box flexDirection="column">
-          <Text dimColor>sleepwalk: turning sleep back on...</Text>
-        </Box>
-      )
+      return below(Box, rest, row(moonOff, 'sleepwalk', 'stopping', <Text dimColor>Turning sleep back on...</Text>))
     }
 
     if (held.phase === 'on') {
       const left = duration(held.endsAt - now)
-      const charge = r?.battery === null || r === null ? '' : ` Battery ${r.battery}%${r.isOnBattery ? '' : ', charging'}.`
+      const charge = r === null || r.battery === null ? '' : `, battery ${r.battery}%`
 
-      return (
-        <Box flexDirection="column">
-          <Box>
-            <Text>
-              Sleepwalking until {held.endsAtText} ({left} left).{charge}{' '}
-            </Text>
-            <Button key="off" label="Turn off" onPress={() => turnOff($, cfg, 'turned off')} />
-          </Box>
-          {held.isJoined || (r?.others ?? 0) > 0 ? (
-            <Text dimColor>
-              {held.isJoined ? 'This session joined a hold another session started.' : 'Another session shares this hold.'}
-            </Text>
-          ) : null}
-          {asks !== false ? (
-            <Text color="yellow">
-              {asks === true ? `This session asks before some tools run (${m} mode). ` : ''}A permission prompt nobody answers stops the work. Answer from your phone with Remote Control, or use Auto or Bypass permissions.
-            </Text>
-          ) : null}
-          <Text dimColor>The screen stays unlocked while the mode is on. Sleep comes back on 2 minutes after the work ends.</Text>
-        </Box>
-      )
+      return below(Box, rest, [
+        row(
+          moonOn,
+          'sleepwalk on',
+          'on',
+          <Text>Awake until {held.endsAtText}</Text>,
+          <Text dimColor>
+            {left} left{charge}
+          </Text>,
+          <Button key="off" label="Stop" onPress={() => turnOff($, cfg, 'turned off')} />,
+        ),
+        asks !== false ? (
+          <Text key="asks" color="yellow">
+            {asks === true ? `${m.charAt(0).toUpperCase()}${m.slice(1)} mode asks first. ` : ''}Prompts wait for you: answer by Remote Control, or use Auto mode.
+          </Text>
+        ) : null,
+      ])
     }
 
-    return (
-      <Box flexDirection="column">
-        {leftover}
-        <Box>
-          <Text dimColor>Shutting the lid sleeps this Mac and stops the work. </Text>
-          <Button key="on" label="Keep working with the lid closed" onPress={() => turnOn($, cfg)} />
-        </Box>
-        {outcome}
-      </Box>
-    )
+    // Off: the switch, and on the same row the last outcome, if any.
+    const outcome = said
+      ? [
+          <Text color={said.isWarning ? 'yellow' : undefined} dimColor={!said.isWarning}>
+            {said.text}
+          </Text>,
+          <Button key="clear" label="OK" onPress={() => update($, note, () => null)} />,
+        ]
+      : []
+    return below(Box, rest, [
+      leftover,
+      row(moonOff, 'sleepwalk', 'off', <Button key="on" label="Stay awake with lid shut" onPress={() => turnOn($, cfg)} />, ...outcome),
+    ])
   })
 }

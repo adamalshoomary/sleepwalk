@@ -1,6 +1,6 @@
 {
   "name": "sleepwalk",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Keeps a Claude Code session working with the MacBook lid shut, then turns sleep back on when the work ends.",
   "author": {
     "name": "Adam Al Shoomary",

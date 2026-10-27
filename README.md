@@ -49,7 +49,7 @@ claude plugin install sleepwalk --marketplace adamalshoomary/sleepwalk
 ## Use
 
 1. Start the work in a session.
-2. Click **Keep working with the lid closed** in the band above the prompt, or type `/lid on`.
+2. Click **Stay awake with lid shut** above the prompt, or type `/lid on`.
 3. Type your Mac password.
 4. Wait for `sleepwalking` in the prompt footer, then shut the lid.
 
@@ -62,6 +62,12 @@ Other commands:
 A second session that turns the mode on joins the running hold with no password.
 
 **Before you shut the lid**, switch the session to Auto or Bypass permissions, or turn on Remote Control and answer prompts from your phone. A prompt nobody answers stops the work. The band warns you if the session can still ask.
+
+## Updates
+
+The mod checks GitHub for a new version once a day. When one is out, a line above the prompt shows **Update** and **Later**, and a pop-up says so once. Update installs it, and your next chat uses it. Nothing installs without the click.
+
+On 1.0.0, which has no check, update once by hand: `claude plugin update sleepwalk@sleepwalk` in a shell, or **+**, then **Plugins**, in the desktop app.
 
 ## When sleep comes back on
 
@@ -77,8 +83,10 @@ If the lid is shut at that moment, the Mac goes to sleep straight away. The band
 
 ## Limits
 
+- The update check reads the mod's `plugin.json` from GitHub once a day. It sends nothing about you or your work.
+
 - `pmset disablesleep` is undocumented. A macOS update could change it.
-- If the watcher is killed with `kill -9`, sleep stays off. The next session start finds it and shows **Turn sleep back on**. By hand: `sudo pmset -a disablesleep 0`.
+- If the watcher is killed with `kill -9`, sleep stays off. The next session start finds it and shows **Turn it back on**. By hand: `sudo pmset -a disablesleep 0`.
 - A mod cannot add to the session's ⋯ menu, so the switch lives in the band, the footer and `/lid`.
 - An organisation policy can block the password box.
 
@@ -105,7 +113,7 @@ If a user asks you to install sleepwalk from this page, follow these steps.
 
 1. Run `claude plugin install sleepwalk --marketplace adamalshoomary/sleepwalk`.
 2. Tell the user to start a new session in the desktop app.
-3. Tell them to click **Keep working with the lid closed** in the band, or type `/lid on`, and type their Mac password.
+3. Tell them to click **Stay awake with lid shut** above the prompt, or type `/lid on`, and type their Mac password.
 4. Never turn the mode on for them. The password is theirs to type.
 
 ## Licence
