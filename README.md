@@ -13,13 +13,6 @@ A Claude Code mod for the desktop app on macOS. One switch keeps a session runni
 
 </div>
 
-<p align="center">
-<b>15 minutes shut on battery</b> &nbsp;·&nbsp; <b>every tested tool kept working</b> &nbsp;·&nbsp; <b>sleep back on by itself</b><br>
-<sub>A real test on a MacBook Air M4, 26 October 2026. Shell, network, both browsers, computer use and a second session all kept working.</sub>
-</p>
-
-You need Claude Code on a Mac, and your Mac password each time you turn the mode on.
-
 > [!WARNING]
 > While the mode is on, the screen does not lock. Anyone who opens the lid finds the Mac unlocked.
 > Never run a shut Mac in a bag, on a bed or under a blanket. Keep it on a hard surface.
