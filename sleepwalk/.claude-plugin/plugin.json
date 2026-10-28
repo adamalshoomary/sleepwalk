@@ -1,0 +1,35 @@
+{
+  "name": "sleepwalk",
+  "version": "2.1.0",
+  "description": "Keeps a Claude Code session working with the MacBook lid shut, then turns sleep back on when the work ends.",
+  "author": {
+    "name": "Adam Al Shoomary",
+    "url": "https://github.com/adamalshoomary"
+  },
+  "license": "MIT",
+  "keywords": [
+    "macos",
+    "sleep",
+    "lid",
+    "clamshell",
+    "caffeinate",
+    "pmset"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "timeLimitMinutes": {
+      "type": "number",
+      "title": "Time limit (minutes)",
+      "description": "Sleep comes back on after this many minutes at the latest, from 5 to 720.",
+      "required": false,
+      "default": 120
+    },
+    "batteryFloor": {
+      "type": "number",
+      "title": "Battery floor (per cent)",
+      "description": "On battery power, sleep comes back on when the charge falls under this, from 5 to 95.",
+      "required": false,
+      "default": 25
+    }
+  }
+}

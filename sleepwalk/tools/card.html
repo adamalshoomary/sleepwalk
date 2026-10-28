@@ -1,0 +1,88 @@
+<!doctype html>
+<!--
+  Source of site/card.png, the 1280x640 link preview card.
+  GitHub shows it when someone shares the repository link (Settings, Social preview).
+  The install page uses it as og:image.
+
+  To render it again on macOS, run from the sleepwalk folder:
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu --hide-scrollbars \
+    --force-device-scale-factor=1 --window-size=1280,640 --user-data-dir="$(mktemp -d)" \
+    --screenshot=site/card.png "file://$PWD/tools/card.html"
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #f7f7fb; --fg: #1f2328; --muted: #59636e; --panel: #ffffff; --line: #dfdeea; --accent: #4c3f91; --accent-fg: #ffffff; --code: #efeef6; --app: #faf9f5; --app-fg: #3d3d3a; --app-muted: #7a776f; --app-band: #efeeea; --app-pill: #e2e1db; --app-box: #ffffff; --app-line: #dedcd4; }
+
+  * { box-sizing: border-box; }
+  .chat { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px; box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 24px 48px -28px rgba(0,0,0,.35); }
+  .chat .label { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .chat .label:not(:first-child) { margin-top: 18px; }
+  .row { display: flex; align-items: center; gap: 12px; font-size: 16px; }
+  .row span { flex: 1; }
+  .row em { font-style: normal; color: var(--muted); font-size: 14px; white-space: nowrap; }
+  .row.muted span { color: var(--muted); }
+  .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--muted); flex: none; }
+  .dot.on { border-color: var(--accent); background: var(--accent); }
+  .sub-row { margin: 6px 0 0 24px; font-size: 14px; color: var(--muted); }
+  /* A small copy of the desktop app: sleepwalk's band, the prompt box and its footer. */
+  .chat { background: var(--app); }
+  .aband { display: flex; align-items: center; gap: 10px; background: var(--app-band); border-radius: 10px; padding: 7px 10px; font-size: 15px; color: var(--app-fg); white-space: nowrap; }
+  .aband svg { flex: none; }
+  .aband .m { min-width: 0; color: var(--app-muted); overflow: hidden; text-overflow: ellipsis; }
+  .aband .pill { flex: none; background: var(--app-pill); border-radius: 7px; padding: 3px 10px; }
+  .abox { display: flex; align-items: center; gap: 10px; margin-top: 8px; background: var(--app-box); border: 1px solid var(--app-line); border-radius: 12px; padding: 11px 12px; color: var(--app-muted); font-size: 15px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .abox .plus { flex: none; color: var(--app-fg); font-size: 20px; line-height: 1; }
+  .abox .ph { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .abox .stop { flex: none; width: 11px; height: 11px; border-radius: 2px; background: var(--app-fg); }
+  .abox .mic { flex: none; color: var(--app-fg); }
+  .afoot { display: flex; justify-content: space-between; gap: 16px; margin: 8px 4px 0; font-size: 13px; color: var(--app-fg); white-space: nowrap; }
+  .afoot .m { min-width: 0; color: var(--app-muted); overflow: hidden; text-overflow: ellipsis; }
+  .afoot small { font-size: 12px; margin-right: 6px; }
+  .ticks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 15px; }
+  .ticks li::before { content: "✓ "; color: var(--accent); font-weight: 700; }
+
+  * { margin: 0; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body { background: var(--bg); color: var(--fg); display: flex; align-items: center; gap: 44px; padding: 0 64px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .left { flex: 0 0 466px; }
+  h1 { font-size: 116px; line-height: 0.92; letter-spacing: -0.05em; font-weight: 800; margin-bottom: 26px; }
+  .tag { font-size: 34px; line-height: 1.22; color: #3d444d; margin-bottom: 34px; }
+  .ask-label { font-size: 19px; font-weight: 700; color: var(--accent); margin-bottom: 10px; }
+  .ask { background: var(--panel); border: 2px solid var(--line); border-left: 8px solid var(--accent); border-radius: 12px; padding: 16px 20px; font: 23px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .foot { margin-top: 30px; font-size: 19px; color: var(--muted); }
+  .right { flex: 1; min-width: 0; }
+  .chat { padding: 28px 24px; border-width: 2px; }
+  .row { font-size: 21px; }
+  .row em { font-size: 18px; }
+  .chat .label { font-size: 15px; }
+  .sub-row { font-size: 18px; }
+  .aband { font-size: 18px; padding: 10px 13px; gap: 10px; border-radius: 12px; }
+  .aband .pill { padding: 4px 13px; border-radius: 9px; }
+  .abox { font-size: 19px; padding: 14px 16px; margin-top: 10px; border-radius: 14px; }
+  .abox .plus { font-size: 25px; }
+  .abox .stop { width: 14px; height: 14px; }
+  .abox .mic { width: 20px; height: 20px; }
+  .afoot { font-size: 16px; margin-top: 10px; }
+  .afoot small { font-size: 15px; }
+  .ticks { font-size: 19px; }
+</style>
+</head>
+<body>
+  <div class="left">
+    <h1>sleepwalk</h1>
+    <p class="tag">Shut your MacBook. Claude keeps working.</p>
+    <p class="ask-label">Paste into Claude Code:</p>
+    <p class="ask">Install sleepwalk from<br>github.com/adamalshoomary/sleepwalk</p>
+    <p class="foot">Claude Code desktop app · macOS</p>
+  </div>
+  <div class="right"><div class="chat">
+  <div class="aband"><svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" aria-hidden="true" viewBox="0 0 24 24"><style>.r{transform-box:view-box;transform-origin:12px 12px;animation:s 5.2s ease-in-out infinite}@keyframes s{0%,100%{transform:rotate(-11deg)}50%{transform:rotate(9deg)}}</style><g class="r"><path d="M14.6 3.3 C9.2 3.1 4.4 7.4 4.6 13.2 C4.8 18.4 9.6 21.4 14.2 20.6 C17.3 20.1 19.6 18.2 20.6 15.9 C15.2 17.1 10.6 13.4 10.9 8.6 C11.1 6.4 12.4 4.5 14.6 3.3 Z" fill="#D97757"><animate attributeName="d" dur="4s" repeatCount="indefinite" values="M14.6 3.3 C9.2 3.1 4.4 7.4 4.6 13.2 C4.8 18.4 9.6 21.4 14.2 20.6 C17.3 20.1 19.6 18.2 20.6 15.9 C15.2 17.1 10.6 13.4 10.9 8.6 C11.1 6.4 12.4 4.5 14.6 3.3 Z;M14.6 3.3 C9.2 3.1 4.4 7.4 4.6 13.2 C4.8 18.4 9.6 21.4 14.2 20.6 C16.6 20.2 18.4 19.0 19.4 17.6 C13.4 18.6 8.3 15.4 8.2 10.0 C8.1 7.2 10.6 4.6 14.6 3.3 Z;M14.6 3.3 C9.2 3.1 4.4 7.4 4.6 13.2 C4.8 18.4 9.6 21.4 14.2 20.6 C17.3 20.1 19.6 18.2 20.6 15.9 C15.2 17.1 10.6 13.4 10.9 8.6 C11.1 6.4 12.4 4.5 14.6 3.3 Z" keyTimes="0;.5;1" calcMode="spline" keySplines=".45 0 .55 1;.45 0 .55 1"/></path></g></svg><span>Awake until 15:25</span><span class="m">1 h 58 min left, battery 80%</span><span class="pill">Stop</span></div>
+  <div class="abox"><span class="plus">+</span><span class="ph">⏎ to send, ⌘⏎ to queue for later</span><span class="stop"></span><svg class="mic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+  <div class="afoot"><span>Bypass permissions</span><span class="m"><small>sleepwalk</small>awake until 15:25, battery 80%</span></div>
+  <p class="label">Kept working with the lid shut</p>
+  <ul class="ticks"><li>Shell and network</li><li>Both browsers</li><li>Computer use</li><li>Other sessions</li></ul>
+</div></div>
+</body>
+</html>

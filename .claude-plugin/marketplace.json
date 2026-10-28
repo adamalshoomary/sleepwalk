@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "sleepwalk",
-      "source": "./",
+      "source": "./sleepwalk",
       "description": "Keeps a Claude Code session working with the MacBook lid shut, then turns sleep back on when the work ends."
     }
   ]
