@@ -196,6 +196,44 @@ export function beatPath(dir: string, pid: string): string {
   return `${dir}/beat-${pid}`
 }
 
+/** A heartbeat's text: the time it was written, then the session's transcript id. */
+export function beatText(now: number, sessionId: string): string {
+  return `${now}\n${sessionId}\n`
+}
+
+/** The transcript id a heartbeat names, or null for an older heartbeat without one. */
+export function beatSession(text: string): string | null {
+  const id = text.split('\n')[1]?.trim() ?? ''
+  return /^[0-9a-fA-F-]{36}$/.test(id) ? id : null
+}
+
+/** Where the desktop app keeps one file per Code chat. */
+export function chatsDir(home: string): string {
+  return `${home}/Library/Application Support/Claude/claude-code-sessions`
+}
+
+/** The desktop app's id and name of a chat, from its file; null when the file does not read. */
+export function chatOf(text: string): { localId: string; title: string } | null {
+  try {
+    const chat = JSON.parse(text) as { sessionId?: unknown; title?: unknown }
+    const localId = typeof chat.sessionId === 'string' && /^local_[A-Za-z0-9-]{1,64}$/.test(chat.sessionId) ? chat.sessionId : ''
+    const title = typeof chat.title === 'string' ? chat.title.trim() : ''
+    return localId ? { localId, title } : null
+  } catch {
+    return null
+  }
+}
+
+/** The link that opens a chat in the desktop app. */
+export function chatLink(localId: string): string {
+  return `claude://code/continue?session=${localId}`
+}
+
+/** A chat name short enough for one row. */
+export function shortTitle(title: string, max = 40): string {
+  return title.length <= max ? title : `${title.slice(0, max - 1).trimEnd()}\u2026`
+}
+
 /** The heartbeat folder under the person's home. */
 export function beatDir(home: string): string {
   return `${home}/Library/Caches/sleepwalk`

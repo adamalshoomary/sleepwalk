@@ -36,11 +36,11 @@ In the desktop app: click **+** next to the prompt box, then **Plugins**, then *
 
 ## What you see
 
-![Two rows above the prompt. Off: a moon and a "Stay awake with lid shut" button. On: a filled moon, "Awake until 15:48, 2 h left, battery 48%", and a Stop button.](/sleepwalk/docs/band.png)
+![Off: a small moon button in the footer under the prompt, beside the model name. On: a row above the prompt with a filled moon, "Awake until 21:10, 2 h left, battery 59%", and a Stop button.](/sleepwalk/docs/band.png)
 
-1. Click **Stay awake with lid shut** above the prompt.
+1. Click the moon **☾** in the footer under the prompt, beside the model name. In a new chat it shows after your first message.
 2. Type your Mac password.
-3. When the row says **Awake until**, shut the lid.
+3. When the row above the prompt says **Awake until**, shut the lid.
 
 Click **Stop** to turn sleep back on early.
 
@@ -57,7 +57,7 @@ At the first of these:
 - When the Mac gets hot.
 - When the chat ends, or you click **Stop**.
 
-If the lid is shut at that moment, the Mac goes to sleep at once. The row says why sleep came back on.
+If the lid is shut at that moment, the Mac goes to sleep at once. The row goes, and a line in the chat says why sleep came back on.
 
 </details>
 
@@ -66,12 +66,12 @@ If the lid is shut at that moment, the Mac goes to sleep at once. The row says w
 
 Type these in the chat:
 
-- `/lid on` does the same as the button.
+- `/lid on` does the same as the moon button.
 - `/lid on 30` sets a 30-minute limit, from 5 to 720 minutes.
 - `/lid off` turns sleep back on.
 - `/lid status` shows the time left and the battery.
 
-A second chat that turns sleepwalk on joins the first, with no password.
+While one chat keeps the Mac awake, your other chats show **Awake:** and that chat's name, with an **Open** button that takes you to it. A second chat that types `/lid on` joins the first, with no password.
 
 </details>
 
@@ -110,7 +110,7 @@ If a user asks you to install sleepwalk from this page:
 
 1. Run `claude plugin install sleepwalk --marketplace adamalshoomary/sleepwalk`.
 2. Tell the user to start a new chat in the desktop app.
-3. Tell the user to click **Stay awake with lid shut** above the prompt and type their Mac password.
+3. Tell the user to send the new chat a first message, then click the moon in the footer under the prompt, beside the model name, and type their Mac password.
 4. Never turn sleepwalk on for the user. The password is theirs to type.
 
 </details>

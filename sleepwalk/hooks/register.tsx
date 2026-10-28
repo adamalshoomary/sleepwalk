@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren, Timer } from 'claude-code'
 
-import type { LidHold, LidWork } from '../types'
+import type { LidHold, LidHolder, LidWork } from '../types'
 import {
   BEAT_MS,
   HEAVY,
@@ -13,6 +13,11 @@ import {
   battery,
   beatDir,
   beatPath,
+  beatSession,
+  beatText,
+  chatLink,
+  chatOf,
+  chatsDir,
   duration,
   firstLine,
   isCancelled,
@@ -24,6 +29,7 @@ import {
   refusal,
   restoreArgv,
   settingsOf,
+  shortTitle,
   sleepDisabled,
   temperature,
   thermalLevel,
@@ -31,16 +37,19 @@ import {
   words,
 } from './facts'
 import type { Battery, Settings, Watcher } from './facts'
-import { moonOff, moonOn, sized } from './icons'
+import { BAND_W, DRAW_S, HOLD_S, ICON_PX, UNDRAW_S, banded, moonCleared, moonOff, moonRunning, moonUndraw } from './icons'
 import { below, checkSoon, registerUpdate } from './update'
+import { WIPE_MS } from './words'
+import type { Words } from './words'
 
 // sleepwalk: keeps this session working with the lid shut.
 //
 // One password box starts a root watcher (hooks/watcher.sh). The watcher turns
 // sleep off and is the one process that turns it back on: when every session's
 // heartbeat stops, at the time limit, on low battery or heat, or on a signal.
-// This module writes the heartbeat while the session works, draws the band,
-// the footer label and /lid, and stops beating 2 minutes after the work ends.
+// This module writes the heartbeat while the session works, draws the band
+// while the Mac is kept awake, the footer's moon switch and /lid, and stops
+// beating 2 minutes after the work ends.
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 type Facts = { isSleepOff: boolean | null; battery: Battery; watchers: Watcher[] }
@@ -64,9 +73,24 @@ const reading = atom({ plugin: 'sleepwalk', key: 'reading' } as const, null)
 const mode = atom({ plugin: 'sleepwalk', key: 'mode' } as const, '')
 const isLeftOff = atom({ plugin: 'sleepwalk', key: 'isSleepLeftOff' } as const, false)
 const isLeftoverHidden = atom({ plugin: 'sleepwalk', key: 'isLeftoverHidden' } as const, false)
+const holder = atom({ plugin: 'sleepwalk', key: 'holder' } as const, null)
 
 let timer: Timer | null = null
 let isBeating = false
+let lookTimer: Timer | null = null
+let isLooking = false
+/** The band's moon: when it first showed, and its source, kept so redraws never restart it. */
+let moon: { shownAt: number; source: string } | null = null
+/** The band's last row as it goes: the running moon under its undraw, until the undraw ends. */
+let leaving: { under: string; undraw: string; isCleared: boolean } | null = null
+/** The band row's phase and when it began, so its words wipe in once per phase. */
+let shownPhase: { phase: string; since: number } | null = null
+
+/** Milliseconds: the words wipe in once the moon is three quarters grown; as the band goes, they wipe out here. */
+const WORDS_IN_MS = DRAW_S * 750
+const WORDS_OUT_MS = 1400
+/** In the app, the password box opens once "Type your Mac password" has wiped in. */
+const ASK_MS = WORDS_IN_MS + WIPE_MS + 200
 
 async function run($: EngineInterface, argv: readonly string[], timeoutMs = 10_000): Promise<Run> {
   try {
@@ -121,6 +145,11 @@ async function tellModel($: EngineInterface, text: string): Promise<void> {
     .catch(() => undefined)
 }
 
+/** The heartbeat names this session, so other chats can say which chat keeps the Mac awake. */
+async function writeBeat($: EngineInterface, path: string, now: number): Promise<void> {
+  await $.fs.write(path, beatText(now, await $.session.id()))
+}
+
 async function removeBeat($: EngineInterface, path: string): Promise<void> {
   if (path.includes('/sleepwalk/beat-')) await run($, ['/bin/rm', '-f', path])
 }
@@ -135,6 +164,53 @@ async function others($: EngineInterface, h: LidHold): Promise<number> {
     entry =>
       /^beat-\d+$/.test(entry.name) && `${dir}/${entry.name}` !== h.beat && now - entry.mtimeMs <= STALE_MS,
   ).length
+}
+
+/** While this chat is off: the other chat whose fresh heartbeat keeps the Mac awake, if any. */
+async function lookForHolder($: EngineInterface): Promise<void> {
+  if (isLooking) return
+  isLooking = true
+  try {
+    const found = (await read($, hold)).phase === 'off' ? await findHolder($) : null
+    const shown = await read($, holder)
+    if (found?.title !== shown?.title || found?.localId !== shown?.localId) await update($, holder, () => found)
+  } catch {
+    // The session ended mid-look; the next session looks again.
+  } finally {
+    isLooking = false
+  }
+}
+
+async function findHolder($: EngineInterface): Promise<LidHolder | null> {
+  const home = await $.env.get('HOME')
+  if (!home?.startsWith('/')) return null
+
+  const dir = beatDir(home)
+  const now = await $.clock.now()
+  const fresh = (await $.fs.list(dir).catch(() => []))
+    .filter(entry => /^beat-\d+$/.test(entry.name) && now - entry.mtimeMs <= STALE_MS)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+  const newest = fresh[0]
+  if (newest === undefined) return null
+  // A heartbeat without a watcher is a password box still open, or a crash.
+  if (ownWatchers(await readFacts($), `${dir}/${newest.name}`).length === 0) return null
+
+  for (const entry of fresh) {
+    const id = beatSession(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))
+    if (id === null) continue
+    const chat = await chatFor($, home, id)
+    if (chat) return chat
+  }
+  return { title: '', localId: '' }
+}
+
+/** The desktop app's chat for a transcript id, from the app's own file for it. */
+async function chatFor($: EngineInterface, home: string, sessionId: string): Promise<LidHolder | null> {
+  const found = await run($, ['/usr/bin/grep', '-rlF', '--include=local_*.json', `"cliSessionId":"${sessionId}"`, chatsDir(home)])
+  const path = found.stdout.split('\n')[0]?.trim()
+  if (!path) return null
+
+  return chatOf(await $.fs.read(path).catch(() => ''))
 }
 
 /** The watcher's own reason from the system log, since the hold began. */
@@ -214,7 +290,7 @@ async function turnOn($: EngineInterface, cfg: Settings): Promise<string> {
 
   const beat = beatPath(beatDir(home), pid)
   const now = await $.clock.now()
-  await $.fs.write(beat, `${now}\n`)
+  await writeBeat($, beat, now)
   await update($, note, () => null)
 
   const running = ownWatchers(facts, beat).find(w => w.until * 1000 > now + 60_000)
@@ -232,9 +308,11 @@ async function turnOn($: EngineInterface, cfg: Settings): Promise<string> {
   // Keep the heartbeat fresh while the password box is open, so the watcher
   // finds it fresh however long the person takes to type.
   startBeating($, cfg)
-  $.clock.after(1, () => void askPassword($, cfg))
+  // The terminal draws the words at once, so the box need not wait there.
+  const isMoving = (await $.session.surfaces()).some(surface => surface !== 'terminal')
+  $.clock.after(isMoving ? ASK_MS : 1, () => void askPassword($, cfg))
 
-  return 'A password box is open. Type your Mac password to keep this Mac awake with the lid shut.'
+  return 'A password box is opening. Type your Mac password to keep this Mac awake with the lid shut.'
 }
 
 async function askPassword($: EngineInterface, cfg: Settings): Promise<void> {
@@ -243,7 +321,7 @@ async function askPassword($: EngineInterface, cfg: Settings): Promise<void> {
 
   const script = await $.fs.read(`${$.plugin.root}/hooks/watcher.sh`).catch(() => '')
   if (!script.startsWith('# sleepwalk root watcher')) {
-    await stayOff($, asked, 'Sleepwalk mode stays off: the watcher script is missing.')
+    await stayOff($, asked, 'Sleepwalk mode stays off: the watcher script is missing.', true)
     return
   }
 
@@ -318,7 +396,7 @@ async function heartbeat($: EngineInterface, cfg: Settings): Promise<void> {
     const h = await read($, hold)
     const now = await $.clock.now()
     if (h.phase === 'asking') {
-      await $.fs.write(h.beat, `${now}\n`)
+      await writeBeat($, h.beat, now)
       return
     }
     if (h.phase !== 'on') {
@@ -326,7 +404,7 @@ async function heartbeat($: EngineInterface, cfg: Settings): Promise<void> {
       return
     }
 
-    await $.fs.write(h.beat, `${now}\n`)
+    await writeBeat($, h.beat, now)
     const facts = await readFacts($)
     if (ownWatchers(facts, h.beat).length === 0) {
       await ended($, h, cfg, facts)
@@ -420,6 +498,8 @@ async function turnOff($: EngineInterface, cfg: Settings, reason: string): Promi
   $.ui.status(undefined)
   await tellModel($, 'Sleepwalk mode is off. Shutting the lid sleeps the Mac again.')
 
+  void lookForHolder($)
+
   return text === '' ? 'Sleep back on.' : text
 }
 
@@ -438,7 +518,12 @@ async function restoreSleep($: EngineInterface): Promise<void> {
     return
   }
   await checkLeftover($)
-  await say($, (await read($, isLeftOff)) ? 'Sleep is still off. Run `sudo pmset -a disablesleep 0` in Terminal.' : 'Sleep back on.')
+  if (await read($, isLeftOff)) {
+    await say($, 'Sleep is still off. Run `sudo pmset -a disablesleep 0` in Terminal.', true)
+    return
+  }
+  await say($, 'Sleep back on.')
+  $.ui.toast('Sleep back on.')
 }
 
 async function statusText($: EngineInterface, cfg: Settings): Promise<string> {
@@ -506,12 +591,17 @@ export const register: Register = (on, options) => {
     }
 
     await checkLeftover($)
+    lookTimer?.cancel()
+    lookTimer = $.clock.every(BEAT_MS, () => void lookForHolder($))
+    void lookForHolder($)
     checkSoon($)
     return started
   })
 
   on('session.end', async ($, e, next) => {
     stopBeating()
+    lookTimer?.cancel()
+    lookTimer = null
     const h = await read($, hold)
     if (h.phase !== 'off') {
       await removeBeat($, h.beat)
@@ -565,41 +655,90 @@ export const register: Register = (on, options) => {
     return { text: 'Use /lid on, /lid on <minutes>, /lid off or /lid status.' }
   })
 
+  // The footer: a mode label while on, and while off the switch, a moon.
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    const held = await read($, hold)
-    if (held.phase !== 'on') return next(e)
+    const [held, other] = await Promise.all([read($, hold), read($, holder)])
+    if (held.phase === 'on') return next({ ...e, props: { ...e.props, modes: [...e.props.modes, 'sleepwalking'] } })
+    if (held.phase !== 'off' || other !== null) return next(e)
 
-    return next({ ...e, props: { ...e.props, modes: [...e.props.modes, 'sleepwalking'] } })
+    const { Box, Button } = $.ui.resolve(e)
+    const rest = await next(e)
+    return (
+      <Box flexDirection="row" alignItems="center" gap="xs">
+        {rest}
+        <Button key="on" label="☾" plain onPress={() => turnOn($, cfg)} />
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
 
-    const [held, said, r, m, isLeft, isHidden] = await Promise.all([
+    const [held, said, r, m, isLeft, isHidden, other] = await Promise.all([
       read($, hold),
       read($, note),
       read($, reading),
       read($, mode),
       read($, isLeftOff),
       read($, isLeftoverHidden),
+      read($, holder),
     ])
     const now = await $.clock.now()
     const asks = asksForPermission(m)
     const els = $.ui.resolve(e)
     const { Box, Button, Text } = els
     const Svg = 'Svg' in els ? els.Svg : undefined
-    // One row: the moon, a few words, the buttons.
-    const row = (icon: string, alt: string, key: string, ...parts: RenderChildren[]) => (
+    // One row: an icon, a few words, the buttons.
+    const row = (source: string, alt: string, key: string, ...parts: RenderChildren[]) => (
       <Box key={key} flexDirection="row" alignItems="center" gap="sm">
-        {Svg && <Svg source={sized(icon, 16)} alt={alt} width={16} height={16} isInteractive />}
+        {Svg && <Svg source={source} alt={alt} width={BAND_W} height={ICON_PX} isInteractive />}
         {parts}
       </Box>
     )
+    // The moon's row. As the band goes, the undraw lies exactly over the running moon.
+    const moonRow = (under: string, undraw: string | null, ...parts: RenderChildren[]) => (
+      <Box key="hold" flexDirection="row" alignItems="center" gap="sm">
+        {Svg && (
+          <Box key="moon" position="relative">
+            <Box key="running">
+              <Svg source={under} alt="sleepwalk" width={BAND_W} height={ICON_PX} isInteractive />
+            </Box>
+            {undraw !== null && (
+              <Box key="undraw" position="absolute" top={0} left={0}>
+                <Svg source={undraw} alt="sleepwalk" width={BAND_W} height={ICON_PX} isInteractive />
+              </Box>
+            )}
+          </Box>
+        )}
+        {parts}
+      </Box>
+    )
+    const still = banded(moonOff)
+    const Client = 'Client' in els ? els.Client : undefined
+    /** The row's words: they wipe in once the moon has grown, and out as the band goes. */
+    const wordsOf = (parts: Words[], isLeaving = false) => {
+      const since = shownPhase?.since ?? now
+      const inAtMs = isLeaving ? 0 : Math.max(0, (moon?.shownAt ?? now) + WORDS_IN_MS - since)
+      const outAtMs = isLeaving && parts.every(part => part.tone !== 'warning') ? WORDS_OUT_MS : null
+      if (Client === undefined) {
+        return parts.map(part => (
+          <Text dimColor={part.tone === 'dim'} color={part.tone === 'warning' ? 'yellow' : undefined}>
+            {part.text}
+          </Text>
+        ))
+      }
+      return <Client key="words" module="./words.tsx" props={{ phase: shownPhase?.phase ?? '', parts, inAtMs, outAtMs }} />
+    }
+    /** Whether this phase's words are in, so its buttons may show. */
+    const isSaid = () => {
+      const since = shownPhase?.since ?? now
+      return now >= Math.max(since, (moon?.shownAt ?? now) + WORDS_IN_MS) + WIPE_MS
+    }
 
     const leftover =
       isLeft && !isHidden && held.phase === 'off'
         ? row(
-            moonOff,
+            still,
             'sleepwalk',
             'leftover',
             <Text color="yellow">Sleep is still off</Text>,
@@ -610,12 +749,36 @@ export const register: Register = (on, options) => {
 
     const rest = await next(e)
 
+    if (held.phase === 'asking' || held.phase === 'stopping' || held.phase === 'on') {
+      leaving = null
+      if (moon === null) moon = { shownAt: now, source: moonRunning(0) }
+      if (shownPhase?.phase !== held.phase) {
+        shownPhase = { phase: held.phase, since: now }
+        // Redraw once the words are in, to show the buttons after them.
+        $.clock.after(Math.max(0, moon.shownAt + WORDS_IN_MS - now) + WIPE_MS, () => $.ui.invalidate('ui.render'))
+      }
+    } else if (moon !== null) {
+      // Sleep came back on: the moon draws back into its dot, then the row goes.
+      const gone = { under: moon.source, undraw: moonUndraw((now - moon.shownAt) / 1000), isCleared: false }
+      leaving = gone
+      moon = null
+      shownPhase = { phase: 'leaving', since: now }
+      $.clock.after(HOLD_S * 1000, () => {
+        gone.isCleared = true
+        $.ui.invalidate('ui.render')
+      })
+      $.clock.after((HOLD_S + UNDRAW_S) * 1000 + 150, () => {
+        if (leaving === gone) leaving = null
+        $.ui.invalidate('ui.render')
+      })
+    }
+
     if (held.phase === 'asking') {
-      return below(Box, rest, row(moonOff, 'sleepwalk', 'asking', <Text>Type your Mac password</Text>))
+      return below(Box, rest, moonRow(moon?.source ?? '', null, wordsOf([{ text: 'Type your Mac password', tone: 'plain' }])))
     }
 
     if (held.phase === 'stopping') {
-      return below(Box, rest, row(moonOff, 'sleepwalk', 'stopping', <Text dimColor>Turning sleep back on...</Text>))
+      return below(Box, rest, moonRow(moon?.source ?? '', null, wordsOf([{ text: 'Turning sleep back on...', tone: 'dim' }])))
     }
 
     if (held.phase === 'on') {
@@ -623,15 +786,14 @@ export const register: Register = (on, options) => {
       const charge = r === null || r.battery === null ? '' : `, battery ${r.battery}%`
 
       return below(Box, rest, [
-        row(
-          moonOn,
-          'sleepwalk on',
-          'on',
-          <Text>Awake until {held.endsAtText}</Text>,
-          <Text dimColor>
-            {left} left{charge}
-          </Text>,
-          <Button key="off" label="Stop" onPress={() => turnOff($, cfg, 'turned off')} />,
+        moonRow(
+          moon?.source ?? '',
+          null,
+          wordsOf([
+            { text: `Awake until ${held.endsAtText}`, tone: 'plain' },
+            { text: `${left} left${charge}`, tone: 'dim' },
+          ]),
+          isSaid() ? <Button key="off" label="Stop" onPress={() => turnOff($, cfg, 'turned off')} /> : null,
         ),
         asks !== false ? (
           <Text key="asks" color="yellow">
@@ -641,18 +803,39 @@ export const register: Register = (on, options) => {
       ])
     }
 
-    // Off: the switch, and on the same row the last outcome, if any.
-    const outcome = said
-      ? [
-          <Text color={said.isWarning ? 'yellow' : undefined} dimColor={!said.isWarning}>
-            {said.text}
-          </Text>,
-          <Button key="clear" label="OK" onPress={() => update($, note, () => null)} />,
-        ]
-      : []
-    return below(Box, rest, [
-      leftover,
-      row(moonOff, 'sleepwalk', 'off', <Button key="on" label="Stay awake with lid shut" onPress={() => turnOn($, cfg)} />, ...outcome),
-    ])
+    // Off. The band shows only what needs the person: the moon as it goes,
+    // a warning, sleep left off, or another chat keeping the Mac awake.
+    // The switch is the footer's moon; an ordinary outcome is a chat line.
+    const warning =
+      said?.isWarning === true
+        ? [
+            <Text color="yellow">{said.text}</Text>,
+            <Button key="clear" label="OK" onPress={() => update($, note, () => null)} />,
+          ]
+        : []
+    const goingRow =
+      leaving !== null
+        ? moonRow(
+            leaving.isCleared ? moonCleared() : leaving.under,
+            leaving.undraw,
+            wordsOf([{ text: said?.text ?? 'Sleep back on.', tone: said?.isWarning === true ? 'warning' : 'dim' }], true),
+          )
+        : null
+    // Another chat keeps the Mac awake: name it, and open it on a press.
+    const otherRow = other
+      ? row(
+          still,
+          'sleepwalk',
+          'other',
+          <Text>{other.title ? `Awake: ${shortTitle(other.title)}` : 'Another chat keeps the Mac awake'}</Text>,
+          other.localId ? (
+            <Button key="open" label="Open" onPress={() => void run($, ['/usr/bin/open', chatLink(other.localId)])} />
+          ) : null,
+          ...(goingRow === null ? warning : []),
+        )
+      : null
+    const warningRow = goingRow === null && otherRow === null && warning.length > 0 ? row(still, 'sleepwalk', 'warning', ...warning) : null
+    const rows = [goingRow, leftover, otherRow, warningRow].filter(one => one !== null)
+    return rows.length === 0 ? rest : below(Box, rest, rows)
   })
 }

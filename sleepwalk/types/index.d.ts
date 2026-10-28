@@ -38,6 +38,14 @@ export type LidReading = {
   others: number
 }
 
+/** The chat that keeps the Mac awake while this one is off; null when none. */
+export type LidHolder = {
+  /** The chat's name in the desktop app; '' when it is not a desktop chat. */
+  title: string
+  /** The desktop app's id for the chat, `local_...`; '' when not known. */
+  localId: string
+}
+
 /** The update line above the prompt; null shows none. */
 export type UpdateView =
   | { phase: 'offer'; current: string; latest: string }
@@ -57,6 +65,8 @@ declare module 'claude-code' {
       /** True when sleep is off on this Mac and no watcher holds it. */
       isSleepLeftOff: boolean
       isLeftoverHidden: boolean
+      /** Another chat that keeps the Mac awake while this one is off. */
+      holder: LidHolder | null
       /** The update line above the prompt; null shows none. */
       update: UpdateView
     }

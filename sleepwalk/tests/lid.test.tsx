@@ -15,6 +15,7 @@ import {
   watchers,
   words,
 } from '../hooks/facts'
+import type { WordsProps } from '../hooks/words'
 
 // Nothing sits beneath the plugin in a test: the hooks below stand for macOS
 // and the engine. `fakeMac` answers the mod's commands from a small model of a
@@ -23,6 +24,9 @@ import {
 const HOME = '/Users/test'
 const DIR = `${HOME}/Library/Caches/sleepwalk`
 const PID = '4242'
+const SID = '11111111-2222-3333-4444-555555555555'
+const OTHER_SID = '66666666-7777-8888-9999-000000000000'
+const CHATS = `${HOME}/Library/Application Support/Claude/claude-code-sessions`
 const BEAT = `${DIR}/beat-${PID}`
 const T0 = 1_800_000_000_000
 const WATCHER_LINE = (until: number) =>
@@ -40,9 +44,15 @@ type Mac = {
   typingMs: number
   log: string[]
   files: Map<string, number>
+  /** What each file holds, beside its time in `files`. */
+  texts: Map<string, string>
   calls: string[][]
   status: string | undefined
   toasts: string[]
+  /** The lines the mod wrote into the chat. */
+  lines: string[]
+  /** Where the session draws. */
+  surfaces: ('terminal' | 'desktop')[]
 }
 
 function newMac(): Mac {
@@ -56,9 +66,12 @@ function newMac(): Mac {
     typingMs: 0,
     log: [],
     files: new Map(),
+    texts: new Map(),
     calls: [],
     status: undefined,
     toasts: [],
+    lines: [],
+    surfaces: ['desktop'],
   }
 }
 
@@ -90,6 +103,12 @@ function fakeMac(on: On, mac: Mac, clock: { now: () => number; sleep: (ms: numbe
     if (cmd === '/usr/bin/notifyutil') return out(`com.apple.system.thermalpressurelevel ${mac.level}\n`)
     if (cmd === '/usr/sbin/ioreg') return out(`      "Temperature" = ${mac.temp}\n`)
     if (cmd === '/bin/date') return out('23:14\n')
+    if (cmd === '/usr/bin/grep') {
+      const wanted = argv.at(-2) ?? ''
+      const found = [...mac.texts].filter(([path, text]) => path.startsWith(`${CHATS}/`) && text.includes(wanted))
+      return out(found.map(([path]) => `${path}\n`).join(''), found.length ? 0 : 1)
+    }
+    if (cmd === '/usr/bin/open') return out('')
     if (cmd === '/bin/sleep') {
       watcherCheck(mac)
       return out('')
@@ -126,9 +145,14 @@ function fakeMac(on: On, mac: Mac, clock: { now: () => number; sleep: (ms: numbe
   })
   on('fs.write', (_, e) => {
     mac.files.set(e.path, clock.now())
+    mac.texts.set(e.path, e.text)
     return { value: undefined }
   })
-  on('fs.read', (_, e) => ({ value: e.path.endsWith('/hooks/watcher.sh') ? '# sleepwalk root watcher: test copy\n' : '' }))
+  on('fs.read', (_, e) => ({
+    value: e.path.endsWith('/hooks/watcher.sh') ? '# sleepwalk root watcher: test copy\n' : (mac.texts.get(e.path) ?? ''),
+  }))
+  on('session.id', () => ({ value: SID }))
+  on('session.surfaces', () => ({ value: mac.surfaces }))
   on('fs.list', (_, e) => ({
     value: [...mac.files]
       .filter(([path]) => path.startsWith(`${e.path}/`))
@@ -143,6 +167,11 @@ function fakeMac(on: On, mac: Mac, clock: { now: () => number; sleep: (ms: numbe
   on('ui.toast', (_, e) => {
     mac.toasts.push(e.text)
     return { value: undefined }
+  })
+  on('session.append', (_, e, next) => {
+    const content = e.message.content as unknown
+    mac.lines.push(Array.isArray(content) ? content.map(part => (part as { text?: string }).text ?? '').join('') : String(content))
+    return next(e)
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.end', (_, e) => ({ sessionId: e.sessionId }))
@@ -173,6 +202,9 @@ const BAND = {
 
 const FOOTER = { plugin: 'sleepwalk', component: 'SessionMode', props: { modes: [] } } as const
 
+/** In the app, the password box opens once the band's words are in, 2.6 s after the switch. */
+const ASKED_MS = 3_000
+
 const RUN = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 100 } } as const
 
 async function lid($: Engine, args: string): Promise<string> {
@@ -180,8 +212,13 @@ async function lid($: Engine, args: string): Promise<string> {
   return done.text ?? ''
 }
 
-async function bandText(ui: { findAll: (q: { type: string }) => Promise<{ text: string }[]> }): Promise<string> {
-  return (await ui.findAll({ type: 'Text' })).map(found => found.text).join(' | ')
+/** Every text drawn, the band's moving words included: those are a Client's props. */
+async function bandText(ui: { findAll: (q: { type: string }) => Promise<{ text: string; props: object }[]> }): Promise<string> {
+  const texts = (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  const words = (await ui.findAll({ type: 'Client' })).flatMap(found =>
+    ((found.props as { props?: WordsProps }).props?.parts ?? []).map(part => part.text),
+  )
+  return [...texts, ...words].join(' | ')
 }
 
 describe('what macOS prints', () => {
@@ -239,7 +276,7 @@ describe('what macOS prints', () => {
 })
 
 describe('the mode in a session', () => {
-  test('the band offers the switch on every surface, and the footer stays clear', async ($, on) => {
+  test('while off, the footer holds the switch on every surface, and the band stays clear', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
     const mac = newMac()
     fakeMac(on, mac, clock)
@@ -247,12 +284,57 @@ describe('the mode in a session', () => {
 
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await $.ui.mount({ ...BAND, surface })
-      expect((await ui.find({ key: 'on' }))?.props.label).toBe('Stay awake with lid shut')
+      expect(await ui.find({ key: 'on' })).toBeUndefined()
+      expect(await bandText(ui)).toBe('engine')
       await ui.unmount()
       const footer = await $.ui.mount({ ...FOOTER, surface })
+      expect((await footer.find({ key: 'on' }))?.props.label).toBe('\u263e')
       expect(await bandText(footer)).not.toContain('sleepwalking')
       await footer.unmount()
     }
+  })
+
+  test('the footer switch asks for the password and the band shows the hold', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+    const footer = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+    await footer.press({ key: 'on' })
+    await clock.advance(ASKED_MS)
+    expect(mac.calls.filter(call => call[0] === '/usr/bin/osascript')).toHaveLength(1)
+    expect(mac.sleep).toBe(1)
+    expect(await footer.find({ key: 'on' })).toBeUndefined()
+    expect(await bandText(footer)).toContain('sleepwalking')
+    await footer.unmount()
+
+    const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await bandText(band)).toContain('Awake until 23:14')
+    await band.unmount()
+  })
+
+  test('in the app the password box waits for its words; in the terminal it opens at once', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+    const asked = () => mac.calls.filter(call => call[0] === '/usr/bin/osascript').length
+
+    const footer = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+    await footer.press({ key: 'on' })
+    await clock.advance(2_400)
+    expect(asked()).toBe(0)
+    await clock.advance(400)
+    expect(asked()).toBe(1)
+    await footer.unmount()
+    await lid($, 'off')
+    await clock.advance(5_000)
+
+    mac.surfaces = ['terminal']
+    await lid($, 'on')
+    await clock.advance(5)
+    expect(asked()).toBe(2)
   })
 
   test('/lid on asks for the password once, then holds and shows it', async ($, on) => {
@@ -261,9 +343,9 @@ describe('the mode in a session', () => {
     fakeMac(on, mac, clock)
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
-    expect(await lid($, 'on')).toContain('A password box is open')
+    expect(await lid($, 'on')).toContain('A password box is opening')
     expect(mac.files.has(BEAT)).toBe(true)
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
 
     const asked = mac.calls.filter(call => call[0] === '/usr/bin/osascript')
     expect(asked).toHaveLength(1)
@@ -277,6 +359,7 @@ describe('the mode in a session', () => {
 
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
     expect(await bandText(band)).toContain('Awake until 23:14 | 2 h left, battery 80%')
+    await clock.advance(2_500)
     expect((await band.find({ key: 'off' }))?.props.label).toBe('Stop')
     await band.unmount()
   })
@@ -287,16 +370,30 @@ describe('the mode in a session', () => {
     fakeMac(on, mac, clock)
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await lid($, 'on')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
 
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await band.find({ key: 'undraw' })).toBeUndefined()
+    // Stop shows once the moon has grown and the words are in.
+    expect(await band.find({ key: 'off' })).toBeUndefined()
+    await clock.advance(2_500)
     await band.press({ key: 'off' })
     expect(mac.files.size).toBe(0)
     expect(mac.sleep).toBe(0)
-    expect(await bandText(band)).not.toContain('Sleep back on')
-    expect((await band.find({ key: 'on' }))?.props.label).toBe('Stay awake with lid shut')
     expect(mac.status).toBeUndefined()
+    expect(mac.lines).toContain('sleepwalk: sleep is back on: the mode was turned off.')
+
+    // The moon draws back into its dot, then the band goes.
+    expect(await band.find({ key: 'undraw' })).toBeDefined()
+    expect(await bandText(band)).toContain('Sleep back on.')
+    await clock.advance(3_200)
+    expect(await band.find({ key: 'hold' })).toBeUndefined()
+    expect(await bandText(band)).toBe('engine')
     await band.unmount()
+
+    const footer = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+    expect((await footer.find({ key: 'on' }))?.props.label).toBe('\u263e')
+    await footer.unmount()
   })
 
   test('a cancelled password box leaves everything off', async ($, on) => {
@@ -306,12 +403,12 @@ describe('the mode in a session', () => {
     fakeMac(on, mac, clock)
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await lid($, 'on')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
 
     expect(mac.files.size).toBe(0)
     expect(mac.sleep).toBe(0)
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await bandText(band)).toContain('the password box was cancelled')
+    expect(await bandText(band)).toBe('engine')
     await band.unmount()
   })
 
@@ -323,7 +420,7 @@ describe('the mode in a session', () => {
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
     expect(await lid($, 'on')).toContain('under the 25% floor')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
     expect(mac.calls.some(call => call[0] === '/usr/bin/osascript')).toBe(false)
     expect(mac.files.size).toBe(0)
   })
@@ -335,7 +432,7 @@ describe('the mode in a session', () => {
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await $.turn.start({ text: 'build it', turnId: 't1' })
     await lid($, 'on')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
 
     await clock.advance(10 * 60_000)
     expect(mac.watcher).not.toBeNull()
@@ -347,8 +444,9 @@ describe('the mode in a session', () => {
     await clock.advance(90_000)
     expect(mac.watcher).toBeNull()
     expect(mac.sleep).toBe(0)
+    expect(mac.lines).toContain('sleepwalk: Sleep back on: the work ended 2 minutes ago.')
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await bandText(band)).toContain('the work ended 2 minutes ago')
+    expect(await bandText(band)).toBe('engine')
     await band.unmount()
   })
 
@@ -358,7 +456,7 @@ describe('the mode in a session', () => {
     fakeMac(on, mac, clock)
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await lid($, 'on')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
     await $.classic.Stop({
       stop_hook_active: false,
       permission_mode: 'bypassPermissions',
@@ -377,21 +475,21 @@ describe('the mode in a session', () => {
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await $.turn.start({ text: 'long job', turnId: 't1' })
     await lid($, 'on')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
 
     await clock.advance(7_200_000 + 20_000)
     expect(mac.watcher).toBeNull()
     expect(mac.sleep).toBe(0)
   })
 
-  test('when the watcher ends the hold itself, the band says why', async ($, on) => {
+  test('when the watcher ends the hold itself, the chat says why and the band clears', async ($, on) => {
     const clock = mock.clock(on, { now: T0 })
     const mac = newMac()
     fakeMac(on, mac, clock)
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await $.turn.start({ text: 'job', turnId: 't1' })
     await lid($, 'on')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
 
     mac.watcher = null
     mac.sleep = 0
@@ -399,8 +497,9 @@ describe('the mode in a session', () => {
     await clock.advance(20_000)
 
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
-    expect(await bandText(band)).toContain('Sleep back on: the battery fell to 24%.')
+    expect(await bandText(band)).toBe('engine')
     await band.unmount()
+    expect(mac.lines).toContain('sleepwalk: sleep is back on: the battery fell to 24%.')
     expect(mac.toasts.at(-1)).toBe('Sleep back on: the battery fell to 24%.')
   })
 
@@ -430,7 +529,7 @@ describe('the mode in a session', () => {
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await $.classic.UserPromptSubmit({ prompt: 'go', permission_mode: 'default' })
     await lid($, 'on')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
 
     const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
     expect(await bandText(band)).toContain('Default mode asks first.')
@@ -454,8 +553,8 @@ describe('the mode in a session', () => {
     expect(await bandText(band)).toContain('Sleep is still off')
     await band.press({ key: 'restore' })
     expect(mac.sleep).toBe(0)
-    expect(await bandText(band)).toContain('Sleep back on.')
-    expect(await bandText(band)).not.toContain('Sleep is still off')
+    expect(await bandText(band)).toBe('engine')
+    expect(mac.toasts.at(-1)).toBe('Sleep back on.')
     await band.unmount()
   })
 
@@ -465,7 +564,7 @@ describe('the mode in a session', () => {
     fakeMac(on, mac, clock)
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await lid($, 'on')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
     expect(mac.files.size).toBe(1)
 
     await $.session.end({ reason: 'prompt_input_exit', sessionId: 's1', resume: { id: 's1' } })
@@ -495,7 +594,7 @@ describe('the mode in a session', () => {
     fakeMac(on, mac, clock)
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
     await lid($, 'on 30')
-    await clock.advance(5)
+    await clock.advance(ASKED_MS)
 
     expect(mac.watcher).toBe((T0 + 30 * 60_000) / 1000)
     expect(await lid($, 'on soon')).toContain('Use /lid on')
@@ -510,5 +609,119 @@ describe('the mode in a session', () => {
     await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
     expect([...mac.files.keys()]).toEqual([`${DIR}/beat-998`])
+  })
+  test('the heartbeat names this chat', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+    await lid($, 'on')
+    await clock.advance(ASKED_MS)
+
+    expect(mac.texts.get(BEAT)?.split('\n')[1]).toBe(SID)
+  })
+})
+
+describe('while another chat keeps the Mac awake', () => {
+  /** Another desktop chat holds: its heartbeat, the watcher, and the app's file for it. */
+  function otherChat(mac: Mac, title: string): void {
+    mac.watcher = T0 / 1000 + 3600
+    mac.sleep = 1
+    mac.files.set(`${DIR}/beat-777`, T0)
+    mac.texts.set(`${DIR}/beat-777`, `${T0}\n${OTHER_SID}\n`)
+    mac.texts.set(
+      `${CHATS}/a/b/local_abc-123.json`,
+      JSON.stringify({ sessionId: 'local_abc-123', cliSessionId: OTHER_SID, title }),
+    )
+  }
+
+  test('the band names that chat, and Open opens it', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    otherChat(mac, 'Mods Q17: tidy ticker')
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+    const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await bandText(band)).toContain('Awake: Mods Q17: tidy ticker')
+    const footer = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+    expect(await footer.find({ key: 'on' })).toBeUndefined()
+    await footer.unmount()
+    await band.press({ key: 'open' })
+    expect(mac.calls).toContainEqual(['/usr/bin/open', 'claude://code/continue?session=local_abc-123'])
+    await band.unmount()
+  })
+
+  test('a long chat name is cut to fit one row', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    otherChat(mac, 'A chat whose name runs on far longer than any band row can hold')
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+    const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await bandText(band)).toContain('Awake: A chat whose name runs on far longer th\u2026')
+    await band.unmount()
+  })
+
+  test('a chat the app has no file for is not named, and has no Open', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    otherChat(mac, 'unused')
+    mac.texts.clear()
+    mac.texts.set(`${DIR}/beat-777`, `${T0}\n${OTHER_SID}\n`)
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+    const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await bandText(band)).toContain('Another chat keeps the Mac awake')
+    expect(await band.find({ key: 'open' })).toBeUndefined()
+    await band.unmount()
+  })
+
+  test('with no watcher running, a fresh heartbeat names no chat', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    otherChat(mac, 'Mods Q17')
+    mac.watcher = null
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+    const footer = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+    expect((await footer.find({ key: 'on' }))?.props.label).toBe('\u263e')
+    await footer.unmount()
+  })
+
+  test('when that chat stops, the switch comes back', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    otherChat(mac, 'Mods Q17')
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+    mac.files.delete(`${DIR}/beat-777`)
+    mac.watcher = null
+    await clock.advance(15_000)
+    const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await bandText(band)).toBe('engine')
+    await band.unmount()
+    const footer = await $.ui.mount({ ...FOOTER, surface: 'desktop' })
+    expect((await footer.find({ key: 'on' }))?.props.label).toBe('\u263e')
+    await footer.unmount()
+  })
+
+  test('turning on here still joins that hold', async ($, on) => {
+    const clock = mock.clock(on, { now: T0 })
+    const mac = newMac()
+    otherChat(mac, 'Mods Q17')
+    fakeMac(on, mac, clock)
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+    expect(await lid($, 'on')).toContain('Joined the hold another session started')
+    await clock.advance(15_000)
+    const band = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    expect(await bandText(band)).toContain('Awake until 23:14')
+    expect(await bandText(band)).not.toContain('Awake: Mods Q17')
+    await band.unmount()
   })
 })
